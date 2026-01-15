@@ -17,6 +17,8 @@ apt install hydra python3-pip -y
 bash wgcf.sh
 bash wireguard-go.sh
 bash warp.sh 4
+
+wget https://raw.githubusercontent.com/413hy/s5/main/s5/warp.sh
 ```
 ```
 源：https://lovetoshare.top/archives/40.html
