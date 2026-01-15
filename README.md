@@ -18,3 +18,16 @@ bash wgcf.sh
 bash wireguard-go.sh
 bash warp.sh 4
 ```
+```
+2、解锁脚本
+wget https://raw.githubusercontent.com/yirenchengfeng1/warp/main/warp.sh
+
+3、全局双栈网络出口
+bash warp.sh d
+
+4、IPv4网络出口
+bash warp.sh 4
+
+5、IPv6网络出口
+bash warp.sh 6
+```
