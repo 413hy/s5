@@ -8,8 +8,8 @@ import os
 from datetime import datetime
 
 # ================= 配置区域 =================
-TG_BOT_TOKEN = "你的_BOT_TOKEN"
-TG_CHAT_ID = "你的_CHAT_ID"
+TG_BOT_TOKEN = "8517647551:AAEosyUg4hcmy1hy4mdiKoo-M9sg9ZqRSAY"
+TG_CHAT_ID = "6977085303"
 WEBHOOK_URL = "https://wepush.yhe8714.workers.dev/wxsend"
 WEBHOOK_AUTH = "hy248624"
 
