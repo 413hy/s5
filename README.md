@@ -19,6 +19,7 @@ bash wireguard-go.sh
 bash warp.sh 4
 ```
 ```
+源：https://lovetoshare.top/archives/40.html
 2、解锁脚本
 wget https://raw.githubusercontent.com/yirenchengfeng1/warp/main/warp.sh
 
