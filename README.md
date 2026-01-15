@@ -14,6 +14,8 @@ apt install hydra python3-pip -y
 
 ### warp ipv6 转 ipv4出口
 ```
+warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp-gpt.sh
+
 bash wgcf.sh
 bash wireguard-go.sh
 bash warp.sh 4
