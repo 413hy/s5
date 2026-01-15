@@ -10,3 +10,11 @@ source venv/bin/activate
 pip install requests PySocks
 apt install hydra python3-pip -y
 ```
+
+
+### warp ipv6 转 ipv4出口
+```
+bash wgcf.sh
+bash wireguard-go.sh
+bash warp.sh 4
+```
