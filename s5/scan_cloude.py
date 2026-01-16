@@ -608,7 +608,8 @@ def main():
         webhook_content = (
             f"节点: {link_full}\n"
             f"延迟: {lat_str} | 速度: {speed_str}\n"
-            f"进度: {current_num}/{total}"
+            f"进度: {current_num}/{total} ({progress_percent:.1f}%)\n"
+            f"【归属地：{info['country']} {info['region']} {info['city']}】-【运营商：{info['isp']}】"
         )
         
         # 写入日志文件
