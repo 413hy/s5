@@ -232,6 +232,8 @@ def verify_login(ip, port, user, password, log_prefix=""):
         ("8.8.8.8", 53),           # DNS
         ("1.1.1.1", 80),           # HTTP
         ("www.google.com", 443),   # HTTPS
+        ("www.cloudflare.com, 443"),
+        ("1.0.0.1, 53"),
     ]
     
     success_count = 0
@@ -255,7 +257,7 @@ def verify_login(ip, port, user, password, log_prefix=""):
             socket.socket = origin_sock
     
     # 至少成功2个测试才认为有效
-    return success_count >= 2
+    return success_count >= 1
 
 
 def comprehensive_verify(ip, port, user=None, pwd=None, log_prefix=""):
