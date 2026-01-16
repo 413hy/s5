@@ -223,20 +223,19 @@ def check_no_auth(ip, port, log_prefix=""):
 def verify_login(ip, port, user, password, log_prefix=""):
     """
     二次验证 - 增强版
-    测试多个目标端口，降低误报率
+    测试多个目标端口，只要有一个成功即可
     """
     origin_sock = socket.socket
     
     # 测试多个目标，提高可靠性
+    # 注意：元组格式为 (host, port)，不要在引号内加逗号
     test_targets = [
         ("8.8.8.8", 53),           # DNS
         ("1.1.1.1", 80),           # HTTP
         ("www.google.com", 443),   # HTTPS
-        ("www.cloudflare.com, 443"),
-        ("1.0.0.1, 53"),
+        ("www.cloudflare.com", 443),  # Cloudflare
+        ("1.0.0.1", 53),           # Cloudflare DNS
     ]
-    
-    success_count = 0
     
     for target_host, target_port in test_targets:
         s = None
@@ -245,9 +244,10 @@ def verify_login(ip, port, user, password, log_prefix=""):
             s.set_proxy(socks.SOCKS5, ip, int(port), username=user, password=password)
             s.settimeout(VERIFY_TIMEOUT)
             s.connect((target_host, target_port))
-            success_count += 1
+            # 只要有一个成功就返回True
+            return True
         except Exception:
-            pass
+            continue  # 失败继续下一个
         finally:
             if s:
                 try:
@@ -256,8 +256,8 @@ def verify_login(ip, port, user, password, log_prefix=""):
                     pass
             socket.socket = origin_sock
     
-    # 至少成功2个测试才认为有效
-    return success_count >= 1
+    # 所有测试都失败才返回False
+    return False
 
 
 def comprehensive_verify(ip, port, user=None, pwd=None, log_prefix=""):
@@ -608,8 +608,7 @@ def main():
         webhook_content = (
             f"节点: {link_full}\n"
             f"延迟: {lat_str} | 速度: {speed_str}\n"
-            f"进度: {current_num}/{total} ({progress_percent:.1f}%)\n"
-            f"【归属地：{info['country']} {info['region']} {info['city']}】-【运营商：{info['isp']}】"
+            f"进度: {current_num}/{total}"
         )
         
         # 写入日志文件
