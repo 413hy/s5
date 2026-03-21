@@ -14,6 +14,8 @@ pip install requests PySocks
 ### warp ipv6 转 ipv4出口
 ```
 warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp-gpt.sh
+wget https://raw.githubusercontent.com/413hy/s5/main/warp/wgcf.sh
+wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go.sh
 
 bash wgcf.sh
 bash wireguard-go.sh
