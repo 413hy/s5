@@ -119,7 +119,17 @@ Print_Delimiter() {
 }
 
 Install_wgcf() {
-    curl -fsSL https://raw.githubusercontent.com/yirenchengfeng1/warp/main/wgcf.sh | bash
+    if command -v wgcf >/dev/null 2>&1; then
+        log INFO "wgcf is already installed: $(command -v wgcf)"
+        return 0
+    fi
+
+    if [[ -x /root/wgcf ]]; then
+        install -m 0755 /root/wgcf /usr/local/bin/wgcf
+    else
+        log ERROR "Local wgcf binary not found: wgcf"
+        exit 1
+    fi
 }
 
 Uninstall_wgcf() {
@@ -238,16 +248,36 @@ Install_WireGuardTools() {
 }
 
 Install_WireGuardGo() {
+    local NEED_WIREGUARD_GO='off'
+
     case ${SysInfo_Virt} in
     openvz | lxc*)
-        curl -fsSL https://raw.githubusercontent.com/yirenchengfeng1/warp/main/wireguard-go.sh | bash
+        NEED_WIREGUARD_GO='on'
         ;;
     *)
-        if [[ ${SysInfo_Kernel_Ver_major} -lt 5 || ${SysInfo_Kernel_Ver_minor} -lt 6 ]]; then
-            curl -fsSL https://raw.githubusercontent.com/yirenchengfeng1/warp/main/wireguard-go.sh | bash
+        if [[ ${SysInfo_Kernel_Ver_major} -lt 5 ]]; then
+            NEED_WIREGUARD_GO='on'
+        elif [[ ${SysInfo_Kernel_Ver_major} -eq 5 && ${SysInfo_Kernel_Ver_minor} -lt 6 ]]; then
+            NEED_WIREGUARD_GO='on'
         fi
         ;;
     esac
+
+    if [[ ${NEED_WIREGUARD_GO} != on ]]; then
+        return 0
+    fi
+
+    if command -v wireguard-go >/dev/null 2>&1; then
+        log INFO "wireguard-go is already installed: $(command -v wireguard-go)"
+        return 0
+    fi
+
+    if [[ -x wireguard-go ]]; then
+        install -m 0755 wireguard-go /usr/local/bin/wireguard-go
+    else
+        log ERROR "Local wireguard-go binary not found: wireguard-go"
+        exit 1
+    fi
 }
 
 Check_WARP_Client() {
