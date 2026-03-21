@@ -7,18 +7,18 @@ apt install python3 python3-venv python3-pip hydra -y
 
 python3 -m venv venv
 source venv/bin/activate
-pip install requests PySocks
+pip install requests PySocks aiohttp aiohttp aiohttp_socks
 ```
 
 
 ### warp ipv6 转 ipv4出口
 ```
-warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp-gpt.sh
-wget https://raw.githubusercontent.com/413hy/s5/main/warp/wgcf.sh
-wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go.sh
+warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp.sh
+wget https://raw.githubusercontent.com/413hy/s5/main/warp/wgcf
+wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go.tar.gz
+install -m 0755 wgcf /usr/local/bin/wgcf
+install -m 0755 wireguard-go /usr/local/bin/wireguard-go
 
-bash wgcf.sh
-bash wireguard-go.sh
 bash warp.sh 4
 
 wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp.sh
