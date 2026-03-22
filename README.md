@@ -22,6 +22,8 @@ install -m 0755 wireguard-go /usr/local/bin/wireguard-go
 
 bash warp.sh 4
 
+
+
 wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp.sh
 ```
 ```
@@ -45,5 +47,7 @@ bash warp.sh 6
 cd s5
 wget https://raw.githubusercontent.com/413hy/s5/main/s5/s5hydra.py
 wget https://raw.githubusercontent.com/413hy/s5/main/s5/combo.txt
-touch socks5_list.txt 
+touch socks5_list.txt
+
+python s5hydra.txt
 ```
