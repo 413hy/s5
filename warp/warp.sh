@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Description: Cloudflare WARP Installer
 # System Required: Debian, Ubuntu, Fedora, CentOS, Oracle Linux, Rocky, AlmaLinux, Arch Linux, Alpine
-# Version: 1.0.40_Final_universal
+# Version: 1.0.40_Final_universal_fix1
 
 FontColor_Red="\033[31m"
 FontColor_Red_Bold="\033[1;31m"
@@ -94,6 +94,11 @@ SysInfo_OS_Ver_major=''
 SysInfo_Init='none'
 WireGuard_ServiceName=''
 WARP_Client_ServiceName='warp-svc'
+WireGuard_Control_Mode='direct'
+
+Command_Exists() {
+    command -v "$1" >/dev/null 2>&1
+}
 
 Find_Local_Binary() {
     local NAME="$1"
@@ -125,9 +130,9 @@ Find_Local_Binary() {
 }
 
 Detect_Init_System() {
-    if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    if Command_Exists systemctl && [[ -d /run/systemd/system ]]; then
         SysInfo_Init='systemd'
-    elif command -v rc-service >/dev/null 2>&1; then
+    elif Command_Exists rc-service; then
         SysInfo_Init='openrc'
     else
         SysInfo_Init='none'
@@ -135,7 +140,7 @@ Detect_Init_System() {
 }
 
 Detect_Virtualization() {
-    if command -v systemd-detect-virt >/dev/null 2>&1; then
+    if Command_Exists systemd-detect-virt; then
         SysInfo_Virt="$(systemd-detect-virt 2>/dev/null || true)"
     fi
 
@@ -170,7 +175,7 @@ Get_System_Info() {
     Detect_Virtualization
     Detect_Init_System
 
-    if command -v rpm >/dev/null 2>&1 && [[ "${SysInfo_RelatedOS}" == *rhel* || "${SysInfo_RelatedOS}" == *fedora* || "${SysInfo_OS_Name_lowercase}" == *rhel* || "${SysInfo_OS_Name_lowercase}" == *centos* || "${SysInfo_OS_Name_lowercase}" == *rocky* || "${SysInfo_OS_Name_lowercase}" == *almalinux* || "${SysInfo_OS_Name_lowercase}" == *ol* || "${SysInfo_OS_Name_lowercase}" == *oracle* ]]; then
+    if Command_Exists rpm && [[ "${SysInfo_RelatedOS}" == *rhel* || "${SysInfo_RelatedOS}" == *fedora* || "${SysInfo_OS_Name_lowercase}" == *rhel* || "${SysInfo_OS_Name_lowercase}" == *centos* || "${SysInfo_OS_Name_lowercase}" == *rocky* || "${SysInfo_OS_Name_lowercase}" == *almalinux* || "${SysInfo_OS_Name_lowercase}" == *ol* || "${SysInfo_OS_Name_lowercase}" == *oracle* ]]; then
         SysInfo_OS_Ver_major="$(rpm -E '%{rhel}' 2>/dev/null)"
         [[ -z "${SysInfo_OS_Ver_major}" || "${SysInfo_OS_Ver_major}" = "%{rhel}" ]] && SysInfo_OS_Ver_major="$(echo "${VERSION_ID:-0}" | cut -d. -f1)"
     else
@@ -216,8 +221,54 @@ Ensure_OpenRC_WG_Service_Instance() {
     fi
 }
 
+Systemd_WG_Template_Exists() {
+    [[ -f /etc/systemd/system/wg-quick@.service || -f /usr/lib/systemd/system/wg-quick@.service || -f /lib/systemd/system/wg-quick@.service ]]
+}
+
+Is_WireGuard_Service() {
+    [[ "$1" = "${WireGuard_ServiceName}" ]]
+}
+
+Resolve_WireGuard_Control_Mode() {
+    WireGuard_Control_Mode='direct'
+
+    if ! Command_Exists wg-quick; then
+        return 0
+    fi
+
+    case "${SysInfo_Init}" in
+    systemd)
+        if Systemd_WG_Template_Exists; then
+            WireGuard_Control_Mode='service'
+        else
+            WireGuard_Control_Mode='direct'
+        fi
+        ;;
+    openrc)
+        Ensure_OpenRC_WG_Service_Instance
+        if [[ -x "/etc/init.d/${WireGuard_ServiceName}" ]]; then
+            WireGuard_Control_Mode='service'
+        else
+            WireGuard_Control_Mode='direct'
+        fi
+        ;;
+    *)
+        WireGuard_Control_Mode='direct'
+        ;;
+    esac
+}
+
 Service_Is_Active() {
     local SERVICE="$1"
+
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        if Command_Exists wg && wg show "${WireGuard_Interface}" >/dev/null 2>&1; then
+            echo active
+        else
+            echo inactive
+        fi
+        return 0
+    fi
 
     case "${SysInfo_Init}" in
     systemd)
@@ -228,28 +279,25 @@ Service_Is_Active() {
         fi
         ;;
     openrc)
-        if rc-service "${SERVICE}" status >/dev/null 2>&1; then
+        if [[ -x "/etc/init.d/${SERVICE}" ]] && rc-service "${SERVICE}" status >/dev/null 2>&1; then
             echo active
         else
             echo inactive
         fi
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
-            if command -v wg >/dev/null 2>&1 && wg show "${WireGuard_Interface}" >/dev/null 2>&1; then
-                echo active
-            else
-                echo inactive
-            fi
-        else
-            echo inactive
-        fi
+        echo inactive
         ;;
     esac
 }
 
 Service_Is_Enabled() {
     local SERVICE="$1"
+
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        echo disabled
+        return 0
+    fi
 
     case "${SysInfo_Init}" in
     systemd)
@@ -275,6 +323,11 @@ Service_Is_Enabled() {
 Service_Enable_Now() {
     local SERVICE="$1"
 
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        wg-quick up "${WireGuard_Interface}"
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         systemctl enable "${SERVICE}" --now
@@ -284,7 +337,7 @@ Service_Enable_Now() {
         rc-service "${SERVICE}" start
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
+        if Is_WireGuard_Service "${SERVICE}"; then
             wg-quick up "${WireGuard_Interface}"
         fi
         ;;
@@ -294,6 +347,11 @@ Service_Enable_Now() {
 Service_Start() {
     local SERVICE="$1"
 
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        wg-quick up "${WireGuard_Interface}"
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         systemctl start "${SERVICE}"
@@ -302,7 +360,7 @@ Service_Start() {
         rc-service "${SERVICE}" start
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
+        if Is_WireGuard_Service "${SERVICE}"; then
             wg-quick up "${WireGuard_Interface}"
         fi
         ;;
@@ -312,6 +370,11 @@ Service_Start() {
 Service_Stop() {
     local SERVICE="$1"
 
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         systemctl stop "${SERVICE}"
@@ -320,7 +383,7 @@ Service_Stop() {
         rc-service "${SERVICE}" stop
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
+        if Is_WireGuard_Service "${SERVICE}"; then
             wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
         fi
         ;;
@@ -330,6 +393,12 @@ Service_Stop() {
 Service_Restart() {
     local SERVICE="$1"
 
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
+        wg-quick up "${WireGuard_Interface}"
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         systemctl restart "${SERVICE}"
@@ -338,7 +407,7 @@ Service_Restart() {
         rc-service "${SERVICE}" restart || rc-service "${SERVICE}" start
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
+        if Is_WireGuard_Service "${SERVICE}"; then
             wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
             wg-quick up "${WireGuard_Interface}"
         fi
@@ -349,6 +418,11 @@ Service_Restart() {
 Service_Disable_Now() {
     local SERVICE="$1"
 
+    if Is_WireGuard_Service "${SERVICE}" && [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         systemctl disable "${SERVICE}" --now
@@ -358,7 +432,7 @@ Service_Disable_Now() {
         rc-update del "${SERVICE}" default >/dev/null 2>&1 || true
         ;;
     *)
-        if [[ "${SERVICE}" = "${WireGuard_ServiceName}" ]]; then
+        if Is_WireGuard_Service "${SERVICE}"; then
             wg-quick down "${WireGuard_Interface}" >/dev/null 2>&1 || true
         fi
         ;;
@@ -366,22 +440,31 @@ Service_Disable_Now() {
 }
 
 Print_WG_Service_Log() {
+    if [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        if Command_Exists wg; then
+            wg show "${WireGuard_Interface}" || true
+        fi
+        ip link show "${WireGuard_Interface}" 2>/dev/null || true
+        dmesg 2>/dev/null | tail -n 50 || true
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         journalctl -u "${WireGuard_ServiceName}" --no-pager
         ;;
     openrc)
         rc-service "${WireGuard_ServiceName}" status || true
-        if command -v wg >/dev/null 2>&1; then
+        if Command_Exists wg; then
             wg show "${WireGuard_Interface}" || true
         fi
-        dmesg | tail -n 50 || true
+        dmesg 2>/dev/null | tail -n 50 || true
         ;;
     *)
-        if command -v wg >/dev/null 2>&1; then
+        if Command_Exists wg; then
             wg show "${WireGuard_Interface}" || true
         fi
-        dmesg | tail -n 50 || true
+        dmesg 2>/dev/null | tail -n 50 || true
         ;;
     esac
 }
@@ -389,7 +472,7 @@ Print_WG_Service_Log() {
 Install_wgcf() {
     local BIN=''
 
-    if command -v wgcf >/dev/null 2>&1; then
+    if Command_Exists wgcf; then
         log INFO "wgcf is already installed: $(command -v wgcf)"
         return 0
     fi
@@ -560,7 +643,7 @@ Install_WireGuardGo() {
         return 0
     fi
 
-    if command -v wireguard-go >/dev/null 2>&1; then
+    if Command_Exists wireguard-go; then
         log INFO "wireguard-go is already installed: $(command -v wireguard-go)"
         return 0
     fi
@@ -585,7 +668,7 @@ Check_WARP_Client() {
 }
 
 Check_WireGuard() {
-    Ensure_OpenRC_WG_Service_Instance
+    Resolve_WireGuard_Control_Mode
     WireGuard_Status="$(Service_Is_Active "${WireGuard_ServiceName}")"
     WireGuard_SelfStart="$(Service_Is_Enabled "${WireGuard_ServiceName}")"
 }
@@ -593,12 +676,14 @@ Check_WireGuard() {
 Install_WireGuard() {
     Print_System_Info
     Check_WireGuard
-    if [[ "${WireGuard_SelfStart}" != enabled || "${WireGuard_Status}" != active ]]; then
-        Install_WireGuardTools
-        Install_WireGuardGo
-    else
+    if [[ "${WireGuard_Status}" = active ]]; then
         log INFO "WireGuard is installed and running."
+        return 0
     fi
+
+    Install_WireGuardTools
+    Install_WireGuardGo
+    Check_WireGuard
 }
 
 Start_WireGuard() {
@@ -644,7 +729,7 @@ Restart_WireGuard() {
 Enable_IPv6_Support() {
     local NEED_FIX='off'
 
-    if command -v sysctl >/dev/null 2>&1; then
+    if Command_Exists sysctl; then
         if sysctl -a 2>/dev/null | grep -q 'disable_ipv6.*=.*1'; then
             NEED_FIX='on'
         fi
@@ -666,7 +751,7 @@ Enable_IPv6_Support() {
 Enable_WireGuard() {
     Enable_IPv6_Support
     Check_WireGuard
-    if [[ "${WireGuard_SelfStart}" = enabled ]]; then
+    if [[ "${WireGuard_Control_Mode}" = "service" && "${WireGuard_SelfStart}" = enabled ]]; then
         Restart_WireGuard
     else
         Start_WireGuard
@@ -720,6 +805,16 @@ Disable_WireGuard() {
 }
 
 Print_WireGuard_Log() {
+    Check_WireGuard
+
+    if [[ "${WireGuard_Control_Mode}" = "direct" ]]; then
+        if Command_Exists wg; then
+            wg show "${WireGuard_Interface}" || true
+        fi
+        ip link show "${WireGuard_Interface}" 2>/dev/null || true
+        return 0
+    fi
+
     case "${SysInfo_Init}" in
     systemd)
         journalctl -u "${WireGuard_ServiceName}" -f
@@ -728,7 +823,7 @@ Print_WireGuard_Log() {
         rc-service "${WireGuard_ServiceName}" status
         ;;
     *)
-        if command -v wg >/dev/null 2>&1; then
+        if Command_Exists wg; then
             wg show "${WireGuard_Interface}"
         fi
         ;;
@@ -740,7 +835,7 @@ Ping_IPv4() {
 }
 
 Ping_IPv6() {
-    if command -v ping6 >/dev/null 2>&1; then
+    if Command_Exists ping6; then
         ping6 -c1 -W1 "$1" >/dev/null 2>&1
     else
         ping -6 -c1 -W1 "$1" >/dev/null 2>&1
@@ -752,7 +847,7 @@ Ping_MTU_IPv4() {
 }
 
 Ping_MTU_IPv6() {
-    if command -v ping6 >/dev/null 2>&1; then
+    if Command_Exists ping6; then
         ping6 -c1 -W1 -s "$1" -M do "$2" >/dev/null 2>&1
     else
         ping -6 -c1 -W1 -s "$1" -M do "$2" >/dev/null 2>&1
