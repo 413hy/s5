@@ -38,3 +38,12 @@ bash warp.sh 4
 5、IPv6网络出口
 bash warp.sh 6
 ```
+
+
+### script
+```
+cd s5
+wget https://raw.githubusercontent.com/413hy/s5/main/s5/s5hydra.py
+wget https://raw.githubusercontent.com/413hy/s5/main/s5/combo.txt
+touch socks5_list.txt 
+```
