@@ -581,9 +581,9 @@ Install_WireGuardTools_Arch() {
 }
 
 Install_WireGuardTools_Alpine() {
-    apk add --no-cache iproute2 openresolv wireguard-tools >/dev/null 2>&1 || \
-    apk add --no-cache iproute2 openresolv wireguard-tools-wg wireguard-tools-wg-quick >/dev/null 2>&1 || {
-        log ERROR "Failed to install wireguard tools on Alpine."
+    apk add --no-cache iproute2 openresolv wireguard-tools iptables nftables >/dev/null 2>&1 || \
+    apk add --no-cache iproute2 openresolv wireguard-tools-wg wireguard-tools-wg-quick iptables nftables >/dev/null 2>&1 || {
+        log ERROR "Failed to install wireguard tools/firewall backend on Alpine."
         exit 1
     }
 }
@@ -621,6 +621,61 @@ Install_WireGuardTools() {
         fi
         ;;
     esac
+}
+
+Ensure_WGQuick_Firewall_Backend() {
+    if command -v nft >/dev/null 2>&1 || command -v iptables-restore >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log INFO "Installing firewall backend required by wg-quick..."
+
+    case "${SysInfo_OS_Name_lowercase}" in
+    debian | ubuntu)
+        apt update
+        apt install -y nftables iptables
+        ;;
+    alpine)
+        apk add --no-cache nftables iptables
+        ;;
+    centos | rhel | rocky | almalinux | ol | ol8 | ol9 | oracle | oraclelinux)
+        local PM=''
+        PM="$(command -v dnf || command -v yum || true)"
+        if [[ -z "${PM}" ]]; then
+            log ERROR "Neither dnf nor yum found."
+            exit 1
+        fi
+        "${PM}" install -y nftables iptables
+        ;;
+    fedora)
+        dnf install -y nftables iptables
+        ;;
+    arch | archlinux)
+        pacman -Sy --noconfirm nftables iptables
+        ;;
+    *)
+        if [[ "${SysInfo_RelatedOS}" == *rhel* || "${SysInfo_RelatedOS}" == *fedora* ]]; then
+            local PM=''
+            PM="$(command -v dnf || command -v yum || true)"
+            if [[ -z "${PM}" ]]; then
+                log ERROR "Neither dnf nor yum found."
+                exit 1
+            fi
+            "${PM}" install -y nftables iptables
+        elif [[ "${SysInfo_RelatedOS}" == *debian* ]]; then
+            apt update
+            apt install -y nftables iptables
+        else
+            log ERROR "No supported method to install firewall backend."
+            exit 1
+        fi
+        ;;
+    esac
+
+    if ! command -v nft >/dev/null 2>&1 && ! command -v iptables-restore >/dev/null 2>&1; then
+        log ERROR "wg-quick firewall backend still missing: need nft or iptables-restore."
+        exit 1
+    fi
 }
 
 Install_WireGuardGo() {
@@ -683,6 +738,7 @@ Install_WireGuard() {
     fi
 
     Install_WireGuardTools
+    Ensure_WGQuick_Firewall_Backend
     Install_WireGuardGo
     Check_WireGuard
 }
