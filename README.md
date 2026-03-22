@@ -1,6 +1,6 @@
 # s5
 
-### socks5
+### socks5-env
 ```
 apt update
 apt install python3 python3-venv python3-pip hydra -y
@@ -13,6 +13,9 @@ pip install requests PySocks aiohttp aiohttp aiohttp_socks
 
 ### warp ipv6 转 ipv4出口
 ```
+mkdir warp
+cd warp
+
 warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp.sh
 wget https://raw.githubusercontent.com/413hy/s5/main/warp/wgcf
 wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go
@@ -44,7 +47,8 @@ bash warp.sh 6
 
 ### script
 ```
-cd s5
+mkdir script
+cd script
 wget https://raw.githubusercontent.com/413hy/s5/main/s5/s5hydra.py
 wget https://raw.githubusercontent.com/413hy/s5/main/s5/combo.txt
 touch socks5_list.txt
