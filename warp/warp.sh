@@ -516,9 +516,10 @@ Backup_WGCF_Profile() {
 }
 
 Read_WGCF_Profile() {
-    WireGuard_Interface_PrivateKey="$(awk -F= '/^PrivateKey[[:space:]]*=/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' "${WGCF_ProfilePath}")"
-    WireGuard_Interface_Address="$(awk -F= '/^Address[[:space:]]*=/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' "${WGCF_ProfilePath}")"
-    WireGuard_Peer_PublicKey="$(awk -F= '/^PublicKey[[:space:]]*=/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' "${WGCF_ProfilePath}")"
+    WireGuard_Interface_PrivateKey="$(sed -n 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*//p' "${WGCF_ProfilePath}" | head -n1)"
+    WireGuard_Interface_Address="$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "${WGCF_ProfilePath}" | head -n1)"
+    WireGuard_Peer_PublicKey="$(sed -n 's/^[[:space:]]*PublicKey[[:space:]]*=[[:space:]]*//p' "${WGCF_ProfilePath}" | head -n1)"
+
     WireGuard_Interface_Address_IPv4="$(echo "${WireGuard_Interface_Address}" | cut -d, -f1 | cut -d'/' -f1 | xargs)"
     WireGuard_Interface_Address_IPv6="$(echo "${WireGuard_Interface_Address}" | cut -d, -f2 | cut -d'/' -f1 | xargs)"
 }
