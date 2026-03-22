@@ -15,8 +15,8 @@ pip install requests PySocks aiohttp aiohttp aiohttp_socks
 ```
 warp出栈脚本：wget https://raw.githubusercontent.com/413hy/s5/main/warp/warp.sh
 wget https://raw.githubusercontent.com/413hy/s5/main/warp/wgcf
-wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go.tar.gz
-tar -xzf wireguard-go.tar.gz
+wget https://raw.githubusercontent.com/413hy/s5/main/warp/wireguard-go
+
 install -m 0755 wgcf /usr/local/bin/wgcf
 install -m 0755 wireguard-go /usr/local/bin/wireguard-go
 
