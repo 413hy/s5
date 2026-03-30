@@ -31,6 +31,9 @@ admin:123456
 888888:888888
 test123:test123
 username:password
+default:default
+qazwsx:qazwsx
+ubuntu:123456
 qwe:qwe
 123456789:123456789
 88888888:88888888
@@ -38,3 +41,5 @@ root:123456
 root:admin
 root:888
 332211:332211
+112233:112233
+112233:332211
